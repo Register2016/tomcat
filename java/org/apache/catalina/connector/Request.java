@@ -40,6 +40,8 @@ import java.util.TimeZone;
 import java.util.TreeMap;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.locks.Lock;
+import java.util.concurrent.locks.ReentrantLock;
 
 import javax.naming.NamingException;
 import javax.security.auth.Subject;
@@ -116,6 +118,7 @@ import org.apache.tomcat.util.net.SSLSupport;
 import org.apache.tomcat.util.res.StringManager;
 import org.ietf.jgss.GSSCredential;
 import org.ietf.jgss.GSSException;
+
 
 /**
  * Wrapper object for the Coyote request.
@@ -2747,6 +2750,9 @@ public class Request implements HttpServletRequest {
         return parts;
     }
 
+    private final Lock lock = new ReentrantLock();
+    private final AtomicBoolean mkFlag = new AtomicBoolean(true);
+    
     private void parseParts(boolean explicit) {
 
         // Return immediately if the parts have already been parsed
@@ -2795,7 +2801,25 @@ public class Request implements HttpServletRequest {
                                         locationStr).getAbsoluteFile();
                 }
             }
-
+                
+            if (!location.exists() && mkFlag.get()) {
+                if (lock.tryLock()) {
+                    try {
+                        lock.lock();
+                        if (!location.exists()) {
+                            location.mkdirs();
+                        }
+                    } catch (Exception e) {
+                        mkFlag.compareAndSet(true, false);
+                        throw new IOException(
+                                sm.getString("coyoteRequest.uploadLocationInvalid",
+                                        location));
+                    } finally {
+                        lock.unlock();
+                    }
+                }
+            }
+            
             if (!location.isDirectory()) {
                 parameters.setParseFailedReason(FailReason.MULTIPART_CONFIG_INVALID);
                 partsParseException = new IOException(
